@@ -1,0 +1,346 @@
+---
+title: "R Notebook-Assignment 2"
+output:
+  word_document: default
+  pdf_document:
+    latex_engine: xelatex
+  html_notebook: default
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+
+# This chunk shows/hides the code in your final report. When echo = TRUE, the code
+# is shown in the report. When echo = FALSE, the code is hidden from the final report.
+# We would like to see your code, so please leave the setting as is during the course.
+# This chunk will not show up in your reports, so you can safely ignore its existence.
+
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+
+The following is your first chunk to start with. Remember, you can add chunks using the menu
+above (Insert -> R) or using the keyboard shortcut Ctrl+Alt+I. A good practice is to use
+different code chunks to answer different questions. You can delete this comment if you like.
+
+Other useful keyboard shortcuts include Alt- for the assignment operator, and Ctrl+Shift+M
+for the pipe operator. You can delete these reminders if you don't want them in your report.
+
+```{r}
+# setwd("C:/Users/sputh/Documents/UMD/Spring 20 Courses/758N_DataMining/Lab2") #Don't forget to set your working directory before you start!
+
+library("tidyverse")
+library("tidymodels")
+library("plotly")
+library("skimr")
+library("lubridate")
+
+```
+
+### Loading the data into a data frame
+
+```{r}
+
+dfbOrg <-
+  read_csv("data/assignment2BikeShare.csv") %>%
+  rename_all(tolower)
+
+```
+
+### Explore the dataset
+```{r}
+head(dfbOrg)
+```
+
+```{r}
+
+skim(dfbOrg)
+```
+
+## 1) 
+### a) Create the additional variables
+#### i) Create a "count" variable
+```{r}
+dfbOrg <-
+  dfbOrg %>%
+  mutate(count = registered + casual)
+
+head(dfbOrg)
+```
+
+#### ii) Create a month variable
+```{r}
+
+dfbOrg <-
+  dfbOrg %>%
+  mutate(month = months(date))
+
+head(dfbOrg)
+```
+
+### b) Scale the data
+```{r}
+
+dfbStd <-
+  dfbOrg %>% 
+  mutate(temp = scale(temp), atemp = scale(atemp), humidity = scale(humidity), windspeed = scale(windspeed))
+
+head(dfbStd)
+```
+
+## 2) Basic Regression in R
+
+```{r}
+
+fitAll <- lm(formula = count ~ ., data = dfbStd)
+summary(fitAll)
+```
+
+## 3) Working with data and exploratory analysis
+### a) Add a variable badWeather
+
+```{r}
+
+dfbOrg <-
+  dfbOrg %>% 
+   mutate(badWeather = ifelse( weathersit == 3 | weathersit ==4, "Yes", "No"))
+
+head(dfbOrg)
+```
+
+### b) Scatterplot of count vs atemp
+
+```{r}
+dfbOrg %>% 
+ ggplot(aes(x=atemp,y=count, color = badWeather)) + geom_point()
+```
+
+### c) Scatterplots for casual vs atemp and registered vs atemp
+
+```{r}
+# feels like temperature vs casual rides count
+dfbOrg %>% 
+ ggplot(aes(x=atemp,y=casual, color = badWeather)) + geom_point()
+
+```
+
+```{r}
+# feels like temperature vs registered rides
+dfbOrg %>% 
+ ggplot(aes(x=atemp,y=registered, color = badWeather)) + geom_point()
+```
+
+#### iv) Scatterplot for count vs atemo with a smooth line showing trend
+
+```{r}
+dfbOrg %>% 
+ ggplot(aes(x=atemp,y=count)) + geom_point() + geom_smooth()
+
+```
+
+## 4) More Linear Regression
+
+```{r}
+
+fitOrg <- lm(formula = count ~ month+weekday+badWeather+temp+atemp+humidity, data = dfbOrg)
+summary(fitOrg)
+```
+
+## 5) Regression diagnostics
+
+```{r}
+
+plot(fitOrg)
+
+```
+
+
+```{r}
+# Check multicollinearirty
+car::vif(fitOrg)
+
+```
+
+```{r}
+# check autocorrelation
+dfbOrg %>% 
+  modelr::add_residuals(fitOrg) %>%
+  ggplot(aes(date, resid)) +
+  geom_line()
+```
+
+```{r}
+# Revised model with fixes for multicollinearity and autocorrelation
+fitOrg <- lm(formula = count ~ date+month+badWeather+temp+humidity, data = dfbOrg)
+summary(fitOrg)
+
+```
+
+```{r}
+plot(fitOrg)
+```
+
+```{r}
+
+# Check multicollinearirty
+car::vif(fitOrg)
+
+```
+
+```{r}
+# Check autocollinearity
+dfbOrg %>% 
+  modelr::add_residuals(fitOrg) %>%
+  ggplot(aes(date, resid)) +
+  geom_line()
+```
+
+
+## 6) Even more regression
+
+```{r}
+
+fitBadWeather <- lm(formula = count ~ badWeather, data = dfbOrg)
+summary(fitBadWeather)
+
+```
+### c) Include weekday and interaction between badWeather and weekday
+
+```{r}
+
+fitBadWeatherWeekday <- lm(formula = count ~ badWeather*weekday, data = dfbOrg)
+summary(fitBadWeatherWeekday)
+
+```
+
+## 7) Predictive Analytics
+
+### a,b) Set the seed and split the data into training and testing sets
+
+```{r}
+set.seed(333)
+
+dfbTrain <- dfbOrg %>%
+  sample_frac(size=0.8)
+
+dfbTest <-
+  dplyr::setdiff(dfbOrg, dfbTrain)
+
+```
+
+
+### c)
+#### i) Model 1
+```{r}
+
+fitOrg <- lm(formula = count ~ date+month+badWeather+temp+humidity, data = dfbTrain)
+summary(fitOrg)
+
+```
+
+```{r}
+resultsOrg <-
+  dfbTest %>% 
+  mutate(predictedCount = predict(fitOrg, dfbTest))
+
+resultsOrg
+```
+
+```{r}
+
+performance <- metric_set(rmse, mae)
+performance(resultsOrg, truth = count, estimate = predictedCount)
+
+```
+
+#### i) Model 2
+
+```{r}
+fitNew <- lm(formula = count ~ date+month+badWeather+temp+humidity+windspeed, data = dfbTrain)
+summary(fitNew)
+```
+
+```{r}
+
+resultsNew <-
+  dfbTest %>% 
+  mutate(predictedCount = predict(fitNew, dfbTest))
+
+resultsNew
+```
+
+```{r}
+
+performance <- metric_set(rmse, mae)
+performance(resultsNew, truth = count, estimate = predictedCount)
+
+```
+
+```{r}
+# Anova test to compare models
+anova(fitOrg, fitNew)
+```
+
+## 8) More predictive analytics
+
+```{r}
+
+# Split the data in year 2011 as training and 2012 as testing data.
+dfbTrain <- dfbOrg %>%
+  filter( year(date) == 2011)
+
+dfbTest <-
+  dplyr::setdiff(dfbOrg, dfbTrain)
+```
+
+```{r}
+
+fitOrg2011 <- lm(formula = count ~ date+month+badWeather+temp+humidity, data = dfbTrain)
+summary(fitOrg2011)
+```
+
+```{r}
+
+resultsOrg2011 <-
+  dfbTest %>% 
+  mutate(predictedCount = predict(fitOrg2011, dfbTest))
+
+resultsOrg2011
+```
+
+```{r}
+
+performance <- metric_set(rmse, mae)
+performance(resultsOrg2011, truth = count, estimate = predictedCount)
+
+```
+
+```{r}
+# Split the data in year 2011 as training and 2012 as testing data.
+dfbTrain <- dfbOrg %>%
+  filter( year(date) == 2011 | (year(date) == 2012 & month(date) <=6))
+
+dfbTest <-
+  dplyr::setdiff(dfbOrg, dfbTrain)
+```
+
+```{r}
+fitOrg18months <- lm(formula = count ~ date+month+badWeather+temp+humidity, data = dfbTrain)
+summary(fitOrg18months)
+```
+
+```{r}
+resultsOrg18months <-
+  dfbTest %>% 
+  mutate(predictedCount = predict(fitOrg18months, dfbTest))
+
+resultsOrg18months
+```
+
+```{r}
+
+performance <- metric_set(rmse, mae)
+performance(resultsOrg18months, truth = count, estimate = predictedCount)
+```
+

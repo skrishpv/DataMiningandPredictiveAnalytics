@@ -1,0 +1,350 @@
+---
+title: "Assignment 5 R Notebook"
+output:
+  word_document: default
+  pdf_document:
+    latex_engine: xelatex
+  html_notebook: default
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+
+# This chunk shows/hides the code in your final report. When echo = TRUE, the code
+# is shown in the report. When echo = FALSE, the code is hidden from the final report.
+# We would like to see your code, so please leave the setting as is during the course.
+# This chunk will not show up in your reports, so you can safely ignore its existence.
+
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+
+The following is your first chunk to start with. Remember, you can add chunks using the menu
+above (Insert -> R) or using the keyboard shortcut Ctrl+Alt+I. A good practice is to use
+different code chunks to answer different questions. You can delete this comment if you like.
+
+Other useful keyboard shortcuts include Alt- for the assignment operator, and Ctrl+Shift+M
+for the pipe operator. You can delete these reminders if you don't want them in your report.
+
+# **Assignment 5**
+
+```{r}
+# Load required libraries
+library(tidyverse)
+library(tidymodels)
+library(plotly)
+library(skimr)
+library(caret)
+library(lubridate)
+```
+
+## 1) Data Preparation:
+### Load the data
+```{r}
+df <-
+  read_csv("data/airlines.csv") %>%  
+  rename_all(tolower)
+```
+
+```{r}
+df
+```
+
+```{r}
+skim(df)
+```
+
+```{r}
+str(df)
+```
+
+### Preprocessing
+```{r}
+# List of columns to be vectorized
+colsToFactor <-
+  c('cc1_miles', 'cc2_miles', 'cc3_miles', 'award')
+```
+
+```{r}
+# Vectorize the columns
+df <-
+  df %>% 
+   mutate_at(colsToFactor, ~factor(.))
+```
+
+```{r}
+skim(df)
+```
+
+### Set seed and split the data
+```{r}
+set.seed(123)
+dfTrain <- df %>%
+  sample_frac(size=0.7)
+
+dfTest <-
+  dplyr::setdiff(df, dfTrain)
+```
+
+## 2) Appropriate data analysis methods:
+
+### Box Plots
+```{r}
+balanceboxplot <-
+  df %>%
+    ggplot(aes(x=award, y=balance, group=award)) + 
+    geom_boxplot()
+
+balanceboxplot
+ggplotly(balanceboxplot)
+
+```
+
+```{r}
+bonusNonflightboxplot <-
+  df %>%
+    ggplot(aes(x=award, y=bonus_miles, group=award)) + 
+    geom_boxplot()
+
+bonusNonflightboxplot
+ggplotly(bonusNonflightboxplot)
+```
+
+```{r}
+bonusFlightboxplot <-
+  df %>%
+    ggplot(aes(x=award, y=flight_miles_12mo, group=award)) + 
+    geom_boxplot()
+
+bonusFlightboxplot
+ggplotly(bonusFlightboxplot)
+```
+
+### Scatter Plots
+```{r}
+balanceScatterPlot <-
+  df %>% 
+  ggplot(aes(x = balance, y = flight_miles_12mo , color = award)) +
+  geom_point() +
+  geom_smooth() +
+  labs(title = "Plot of Miles redeemed based on overall balance and last 12 moth balance", y= "Flight Miles earned in last 12 months", x = "Overall Flight miles")
+
+balanceScatterPlot
+ggplotly(balanceScatterPlot)
+```
+
+### Histogram
+```{r}
+df %>% 
+  ggplot(aes(x=days_since_enroll, fill=award)) +
+  geom_histogram(bins = 30, color='black')
+```
+
+### Extra Scatter plot
+```{r}
+balanceDaysScatterPlot <-
+  df %>% 
+  ggplot(aes(x = days_since_enroll, y = flight_miles_12mo , color = award)) +
+  geom_point() +
+  geom_smooth() +
+  labs(title = "Plot of Miles redeemed based on overall balance and last 12 moth balance", y= "Flight Miles earned in last 12 months", x = "Overall Flight miles")
+
+balanceDaysScatterPlot
+ggplotly(balanceDaysScatterPlot)
+```
+
+## 3) Goal 1: Identifying if a customer will claim a travel award using their rewards
+
+### Logistic Regression
+```{r}
+fitLogistic <- glm(formula = award ~ .-id-bonus_trans-flight_trans_12-cc1_miles-cc2_miles-cc3_miles, data = dfTrain, family = binomial)
+summary(fitLogistic)
+```
+
+
+```{r}
+resultsLogCaret <-
+  train(award ~ .-id-bonus_trans-flight_trans_12-cc1_miles-cc2_miles-cc3_miles, family='binomial', data=dfTrain, method='glm') %>% 
+  predict(dfTest, type='raw') %>% 
+  bind_cols(dfTest, predictedClass=.)
+
+resultsLogCaret %>% 
+  xtabs(~predictedClass + award, .) %>% 
+  confusionMatrix(positive = '1') 
+
+```
+
+### Check baseline accuracy
+```{r}
+resultsLogCaret %>% 
+  group_by(award) %>% 
+  tally() %>% 
+  mutate(pct = 100*n/sum(n))
+```
+
+```{r}
+resultsLogCaret %>% 
+  group_by(predictedClass) %>% 
+  tally() %>% 
+  mutate(pct = 100*n/sum(n))
+```
+
+### Decision tree model
+```{r}
+fitTree <- train(award ~ .-id, data=dfTrain, method='rpart', trControl=trainControl(method='cv', number=10))
+fitTree
+```
+
+```{r}
+resultsTree <-
+  fitTree %>% 
+  predict(dfTest, type='raw') %>% 
+  bind_cols(dfTest, predictedClass=.)
+
+resultsTree %>% 
+  xtabs(~predictedClass+award, .) %>% 
+  confusionMatrix(positive = '1')
+```
+
+### Random Forest Model
+```{r}
+resultsRandomForest <- train(award ~ .-id, data=dfTrain, method='ranger', trControl=trainControl(method='cv', number=10)) %>%
+  predict(dfTest, type='raw') %>%
+  bind_cols(dfTest, predictedClass=.)
+```
+
+```{r}
+resultsRandomForest %>%
+  xtabs(~predictedClass+award, .) %>%
+  confusionMatrix(positive = '1')
+```
+
+
+```{r}
+fitRandomForest <- train(award ~ ., data=dfTrain, method='rf', trControl=trainControl(method='cv', number=10))
+```
+
+```{r}
+resultsRandomForest <-
+  fitRandomForest %>% 
+  predict(dfTest, type='prob') %>% 
+  bind_cols(dfTest, predictedProb=.$"1")
+
+resultsRandomForest
+
+
+```
+
+
+
+### KNN Model
+```{r}
+modelKnnCaret <-
+  train(award~ .-id, data=dfTrain, preProcess=c("center","scale"),tuneLength = 30 ,method='knn',trControl=trainControl(method='cv', number=10))
+```
+
+```{r}
+resultsKnnCaret<-
+predict(modelKnnCaret, dfTest) %>% 
+bind_cols(dfTest, predictedClass=.)
+
+resultsKnnCaret %>% 
+  xtabs(~predictedClass + award, .) %>% 
+  confusionMatrix(positive = '1')
+```
+
+### XGBoost Model
+```{r}
+fitXGBoost <- train(award ~ .-id, data=dfTrain, method='xgbTree', trControl=trainControl(method='cv', number=10))
+```
+
+```{r}
+plot(varImp(fitXGBoost), top=20)
+```
+
+```{r}
+varImp(fitXGBoost)$importance %>%    # Add scale=FALSE inside VarImp if you don't want to scale
+  rownames_to_column(var = "Variable") %>%
+  mutate(Importance = scales::percent(Overall/100)) %>% 
+  arrange(desc(Overall)) %>% 
+  as_tibble()
+```
+
+```{r}
+resultsXGBoost <-
+  fitXGBoost %>% 
+  predict(dfTest, type='raw') %>% 
+  bind_cols(dfTest, predictedClass=.)
+
+resultsXGBoost %>% 
+  xtabs(~predictedClass+award, .) %>% 
+  confusionMatrix(positive = '1')
+```
+
+## 4) Goal 2: Identifying factors that lead to customers claiming travel award
+
+```{r}
+df$award <- as.numeric(df$award)
+```
+
+
+```{r}
+skim(df)
+```
+
+### Linear Probability Model
+```{r}
+fitLPM <- lm(formula = award ~ .-id, data = df)
+summary(fitLPM)
+```
+
+```{r}
+df$award <- as.factor(df$award)
+```
+
+### Lasso Model
+```{r}
+lambdaValues <- 10^seq(-3, 3, length = 100)
+```
+
+```{r}
+set.seed(2020)
+```
+
+```{r}
+fitLasso <- train(award ~ ., family='binomial', data=df, method='glmnet', trControl=trainControl(method='cv', number=10), tuneGrid = expand.grid(alpha=1, lambda=lambdaValues))
+```
+
+```{r}
+varImp(fitLasso)$importance %>%    # Add scale=FALSE inside VarImp if you don't want to scale
+  rownames_to_column(var = "Variable") %>%
+  mutate(Importance = scales::percent(Overall/100)) %>% 
+  arrange(desc(Overall)) %>% 
+  as_tibble()
+```
+
+```{r}
+plot(varImp(fitLasso))
+```
+
+### Group Lasso Model
+```{r}
+library(grplasso)
+```
+
+```{r}
+dfGroup <-
+  df %>%
+  mutate(award = as.numeric(award)) %>% 
+  mutate(award = ifelse(award == 2, 1, 0))
+```
+
+```{r}
+fitGroupedLasso <- grplasso(award ~ .-id, data=dfGroup, model=LogReg(), lambda=100)
+```
+
+
+```{r}
+fitGroupedLasso$coefficients
+```

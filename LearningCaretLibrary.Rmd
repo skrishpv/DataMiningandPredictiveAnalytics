@@ -1,0 +1,426 @@
+---
+title: "Lab III"
+output:
+  html_notebook: default
+  pdf_document:
+    latex_engine: xelatex
+always_allow_html: yes
+---
+
+***
+
+```{r}
+library("tidyverse")
+library("tidymodels")
+library("plotly")
+library("skimr")
+library("caret")
+
+```
+
+
+```{r}
+dff <- read_csv('framinghamHeart.csv')
+str(dff)
+```
+
+
+```{r}
+colsToFactor <- c('gender', 'education', 'currentSmoker', 'BPMeds', 'prevalentStroke', 'prevalentHyp', 'diabetes')
+dff <- dff %>%
+  mutate_at(colsToFactor, ~factor(.))
+str(dff)
+```
+
+***
+### Question 1
+
+```{r}
+#Boxplot of sysBP broken down by TenYearCHD
+
+plot1 <- ggplot(data = dff, aes(x=as.factor(TenYearCHD), y=sysBP)) +
+            geom_boxplot(fill="lightblue", color="black") 
+plot1
+#ggplotly(plot1)
+
+#Boxplot of diaBP broken down by TenYearCHD
+plot2 <- ggplot(data = dff, aes(x=as.factor(TenYearCHD), y=diaBP)) +
+            geom_boxplot(fill="lightblue", color="black")
+plot2
+#ggplotly(plot2)
+
+
+#Boxplot of totChol broken down by TenYearCHD
+plot3 <- ggplot(data = dff, aes(x=as.factor(TenYearCHD), y=totChol)) +
+            geom_boxplot(fill="lightblue", color="black")
+plot3
+#ggplotly(plot3)
+```
+
+***
+
+### Question 2
+
+```{r}
+set.seed(123)
+
+dffTrain <- dff %>% sample_frac(0.7)
+dffTest <- setdiff(dff, dffTrain)
+```
+
+
+```{r}
+# Distribution of men and women
+
+dffTrain %>% 
+  group_by(gender) %>% 
+  tally() %>% 
+  mutate(pct = 100*n/sum(n))
+
+# Distribution of Age
+dffTrain %>% 
+  group_by(ageGroup=cut_interval(age, length=10)) %>% 
+  tally() %>% 
+  mutate(pct = 100*n/sum(n))
+
+# Distribution of men and women
+dffTest %>% 
+  group_by(gender) %>% 
+  tally() %>% 
+  mutate(pct = 100*n/sum(n))
+
+# Distribution of Age
+dffTest %>% 
+  group_by(ageGroup=cut_interval(age, length=10)) %>% 
+  tally() %>% 
+  mutate(pct = 100*n/sum(n))
+
+
+# Distribution of age split by gender
+
+agePlot <- ggplot(aes(x = age, fill=gender), data=dffTrain) +
+  geom_histogram(color='black')
+
+agePlot
+#ggplotly(ageplot)
+
+```
+
+***
+
+### Question 3 
+
+```{r}
+fitLPM <- lm(TenYearCHD ~ . -currentSmoker, data = dffTrain)
+summary(fitLPM)
+```
+
+```{r}
+plot(fitLPM)
+```
+
+
+***
+
+### Question 4
+
+```{r}
+resultsLPM <-
+  lm(TenYearCHD ~ . -currentSmoker, data=dffTrain) %>% 
+  predict(dffTest, type='response') %>%
+  bind_cols(dffTest, predictedProb=.) %>% 
+  mutate(predictedClass = ifelse(predictedProb > 0.5, 1, 0))
+  # The last line converts predicts probabilities into classes!
+```
+
+
+```{r}
+resultsLPM
+```
+
+
+***
+***
+#### Line 1
+```{r}
+#Line 1 - Building the linear Probability model
+
+#  lm(TenYearCHD ~ . -currentSmoker, data=dffTrain)
+
+
+```
+
+As you see, the first line created a Linear Probability Model object as an output.
+
+#### Line 2
+```{r}
+#Line 2 - Building the linear Probability model and generating predictions
+
+#  lm(TenYearCHD ~ . -currentSmoker, data=dffTrain) %>%
+#  predict(dffTest, type='response')
+
+```
+Here we see that the first line builds the linear probability model and the '%>%' pipe function feeds this model into the predict function which uses it to predict the predicted probabilities using dffTest. type ="response" tells the predict function that we want predicted probabilities as the output.
+
+The output of the first 2 lines of code together is a list of predicted probabilities.
+
+#### Line 3
+
+```{r}
+# Line 3 - Adding the predicted probabilities as an additional column called predictedProb.
+
+#  lm(TenYearCHD ~ . -currentSmoker, data=dffTrain) %>% 
+#    predict(dffTest, type='response') %>%
+#    bind_cols(dffTest, predictedProb=.)
+```
+
+We know that the ouput of the first 2 lines of code is the predicted probabilities. This is then fed into the 3rd line of code using the '%>%' pipe function. The bind_cols() function is used to bind columns together. We bind the columns from dffTest and the predicted probabilities that have been generated.
+The output of this code would be a dataframe.
+
+#### Line 4
+```{r}
+#Line 4 - Creating a new column called predictedClass which is the classes assigned based on the value of predictedProb
+
+#  resultsLPM <-
+#    lm(TenYearCHD ~ . -currentSmoker, data=dffTrain) %>% 
+#    predict(dffTest, type='response') %>%
+#    bind_cols(dffTest, predictedProb=.) %>% 
+#    mutate(predictedClass = ifelse(predictedProb > 0.5, 1, 0))
+  
+#  resultsLPM
+```
+
+The final line of code creates a new column called predictedClass using the mutate function. Its takes input the dataframe created as the output of the bind_cols function and then adds a new column to this dataframe.
+
+This entire output is then stored as resultsLPM which is now a dataframe itself. You can run resultsLPM or click on it in the environment to see the contents of this dataframe.
+
+***
+***
+
+
+```{r}
+
+#How many people have heart disease in reality (Actuals/Truth)
+dffTest %>% 
+  group_by(TenYearCHD) %>% 
+  tally() %>% 
+  mutate(pct = 100*n/sum(n))
+
+#How many people did our model predict to have a heart disease (Presicted/Estimated)
+resultsLPM %>% 
+  group_by(predictedClass) %>% 
+  tally() %>% 
+  mutate(pct = 100*n/sum(n))
+```
+
+
+```{r}
+dffTrain <- dffTrain %>% 
+              mutate(TenYearCHD = as.factor(TenYearCHD))
+dffTest <- dffTest %>% 
+              mutate(TenYearCHD = as.factor(TenYearCHD))
+```
+
+***
+
+### Question 5
+
+
+```{r}
+fitLog <- glm(TenYearCHD ~ . -currentSmoker, family='binomial', data=dffTrain)
+summary(fitLog)
+```
+
+
+```{r}
+##Interpreting the coefficients
+exp(coef(fitLog))
+```
+
+***
+### Question 6
+
+```{r}
+resultsLog <-
+  glm(TenYearCHD ~ . -currentSmoker, family='binomial', data=dffTrain) %>% 
+  predict(dffTest, type='response') %>%
+  bind_cols(dffTest, predictedProb=.) %>% 
+  mutate(predictedClass = as.factor(ifelse(predictedProb > 0.5, 1, 0)))
+```
+
+
+```{r}
+#How many people have heart disease in reality (Actuals/Truth)
+dffTest %>% 
+  group_by(TenYearCHD) %>% 
+  tally() %>% 
+  mutate(pct = 100*n/sum(n))
+
+#How many people did our model predict to have a heart disease (Presicted/Estimated)
+resultsLog %>% 
+  group_by(predictedClass) %>% 
+  tally() %>% 
+  mutate(pct = 100*n/sum(n))
+```
+
+***
+
+### Question 7
+
+```{r}
+resultsLog %>% 
+  conf_mat(truth = TenYearCHD, estimate = predictedClass) #%>% 
+  #autoplot(type = 'heatmap')
+```
+
+### Question 8
+
+```{r}
+plotLog <- ggplot(aes(y=predictedProb, x=age, color=gender), data=resultsLog) +
+            geom_point() +
+            geom_smooth() +
+            labs(title="Predicted probability of heart disease vs. Age",
+                 y = "Probability of heart disease", x ="Age")
+
+plotLog
+
+```
+
+```{r}
+plotLog <- ggplot(aes(y=predictedProb, x=cigsPerDay), data=resultsLog) +
+            geom_point() +
+            geom_smooth() +
+            labs(title="Predicted probability of heart disease vs. Cigs per day",
+                 y = "Probability of heart disease", x ="Cigs per day")
+
+plotLog
+
+```
+
+
+```{r}
+plotLog <- ggplot(aes(y=predictedProb, x=totChol, color=gender), data=resultsLog) +
+            geom_point() +
+            geom_smooth() +
+            labs(title="Predicted probability of heart disease vs. Total cholesterol",
+                 y = "Probability of heart disease", x ="Total cholesterol")
+
+plotLog
+
+```
+
+```{r}
+plotLog <- ggplot(aes(y=predictedProb, x=glucose), data=resultsLog) +
+            geom_point() +
+            geom_smooth() +
+            labs(title="Predicted probability of heart disease vs. Glucose",
+                 y = "Probability of heart disease", x ="Glucose")
+
+plotLog
+
+```
+
+### Question 9
+
+```{r}
+resultsLogCaret <-
+  train(TenYearCHD ~ . -currentSmoker, family='binomial', data=dffTrain, method='glm') %>%
+  predict(dffTest, type='raw') %>%
+  bind_cols(dffTest, predictedClass=.)
+
+resultsLogCaret %>% 
+  xtabs(~predictedClass+TenYearCHD, .) %>% 
+  confusionMatrix(positive = '1')
+
+```
+
+
+### Question 10
+
+```{r}
+#Load the data (we're loading a small sample of the data)
+
+df <- read_csv('data/bancoPortugal.csv')
+
+skim(df)
+
+```
+
+
+```{r}
+#Define the factors, drop some variables, rename the DV
+
+cols <- c('openedAccount', 'newcustomer', 'job', 'marital', 'education', 'default', 'housing', 'loan', 'contact', 'month', 'day_of_week', 'poutcome', 'agegroup')
+
+df <- df %>%
+  mutate_at(cols, ~factor(.)) %>% 
+  select(-duration, -agegroup, -newcustomer, -euribor3m, -day_of_week, -month)
+
+```
+
+
+```{r}
+#Set the seed and split the data into training and test (70%-30%)
+
+set.seed(123)
+dfTrain <- df %>% sample_frac(0.7)
+dfTest <- setdiff(df, dfTrain)
+
+```
+
+
+```{r}
+#Run a logistic model using the native way
+
+fitLog <- glm(openedAccount ~ ., family='binomial', data=dfTrain)
+summary(fitLog)
+
+```
+
+```{r}
+car::vif(fitLog)
+
+```
+
+```{r}
+#pdays is problematic not because of collinearity but because of the coding of non-contact (see the data dictionary)
+#If you need to keep it, you need to recode. I choose to drop it here
+#emp.var.rate cases a serious collinearity problem, and is correlated with nr.employed. I chose to keep nr.employed because it is more intuitive
+
+fitLog <- glm(openedAccount ~ . -pdays -emp.var.rate, family='binomial', data=dfTrain)
+summary(fitLog)
+
+car::vif(fitLog)
+
+```
+
+```{r}
+#Running logistic regression, making predictions, and calculating performance using Caret
+#If you want, you could change type from 'raw' to 'prob' to get the probabilities
+
+resultsLogCaret <-
+  train(openedAccount ~ . -pdays -emp.var.rate -default, family='binomial', data=dfTrain, method='glm') %>%
+  predict(dfTest, type='raw') %>%
+  bind_cols(dfTest, predictedClass=.)
+
+resultsLogCaret %>% 
+  xtabs(~predictedClass+openedAccount, .) %>% 
+  confusionMatrix(positive = '1')
+
+```
+
+
+```{r}
+#Running logistic regression, making predictions, and calculating performance using Caret
+#If you want, you could change type from 'raw' to 'prob' to get the probabilities
+
+resultsLogCaretOne <-
+  train(openedAccount ~ poutcome, family='binomial', data=dfTrain, method='glm') %>% #default to explain rank deficiency
+  predict(dfTest, type='raw') %>%
+  bind_cols(dfTest, predictedClass=.)
+
+resultsLogCaretOne %>% 
+  xtabs(~predictedClass+openedAccount, .) %>% 
+  confusionMatrix(positive = '1')
+
+```

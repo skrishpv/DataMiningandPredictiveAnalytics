@@ -1,0 +1,561 @@
+---
+title: "Assignment 3 R Notebook"
+output:
+  word_document: default
+  pdf_document:
+    latex_engine: xelatex
+  html_notebook: default
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+
+# This chunk shows/hides the code in your final report. When echo = TRUE, the code
+# is shown in the report. When echo = FALSE, the code is hidden from the final report.
+# We would like to see your code, so please leave the setting as is during the course.
+# This chunk will not show up in your reports, so you can safely ignore its existence.
+
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+
+The following is your first chunk to start with. Remember, you can add chunks using the menu
+above (Insert -> R) or using the keyboard shortcut Ctrl+Alt+I. A good practice is to use
+different code chunks to answer different questions. You can delete this comment if you like.
+
+Other useful keyboard shortcuts include Alt- for the assignment operator, and Ctrl+Shift+M
+for the pipe operator. You can delete these reminders if you don't want them in your report.
+
+# **Assignment 3**
+
+```{r}
+# Load required libraries
+library(tidyverse)
+library(tidymodels)
+library(plotly)
+library(skimr)
+library(caret)
+library(cowplot)
+library(grplasso)
+library(lubridate) #Be careful if you load this in the first chunk because it masks the setdiff function
+```
+
+## 1) Data Preparation
+#### Load the data and massage the data
+
+```{r}
+
+dfc <-
+  read_csv("data/assignment3Carvana.csv") %>%  
+  rename_all(tolower)
+
+```
+
+```{r}
+
+skim(dfc)
+```
+
+```{r}
+
+str(dfc)
+```
+
+#### COnvert the variables to factors
+```{r}
+# List of columns to be vectorized
+colsToFactor <-
+  c('auction', 'make', 'color', 'wheeltype', 'size')
+
+```
+
+```{r}
+
+# Vectorize the columns
+dfc <-
+  dfc %>% 
+   mutate_at(colsToFactor, ~factor(.))
+
+```
+
+#### Split the dataset into test and train data
+```{r}
+
+set.seed(52156)
+dfcTrain <- dfc %>%
+  sample_frac(size=0.65)
+
+dfcTest <-
+  dplyr::setdiff(dfc, dfcTrain)
+```
+
+## 2) Exploratory analysis of the training data set
+
+### a) Construct and report boxplots
+####(1) Auction prices of the cars
+```{r}
+
+auctionBoxplot <-
+  dfc %>%
+    ggplot(aes(x=factor(badbuy), y=mmraauction)) + 
+    geom_boxplot()
+
+auctionBoxplot
+ggplotly(auctionBoxplot)
+
+```
+
+####(2) Ages of the cars
+```{r}
+ageBoxplot <-
+  dfc %>%
+    ggplot(aes(x=factor(badbuy), y=age)) + 
+    geom_boxplot()
+
+ageBoxplot
+ggplotly(ageBoxplot)
+```
+
+####(3) Odometer readings of the cars
+
+```{r}
+odometerBoxplot <-
+  dfc %>%
+    ggplot(aes(x=factor(badbuy), y=odo)) + 
+    geom_boxplot()
+
+odometerBoxplot
+ggplotly(odometerBoxplot)
+```
+
+
+### b) Count of good cars and lemons broken up by size
+```{r}
+tally(group_by(dfcTrain,size, badbuy))
+```
+
+### b) i) WHich vehicle size contributes to the most lemons
+```{r}
+dfReport<-
+  tally(group_by(dfcTrain,size, badbuy)) %>%
+    ungroup() %>% 
+    filter(badbuy == 1) %>%
+    mutate(pctLemon = n/sum(n)*100) %>% 
+    arrange(desc(pctLemon))
+    
+dfReport
+  
+```
+
+
+## 3) Linear Probability Model
+
+```{r}
+fitLPM <- lm(formula = badbuy ~ ., data = dfcTrain)
+summary(fitLPM)
+```
+
+### a) Compute the RMSE
+
+#### rmse for train set
+```{r}
+
+resultsTrainSet <-
+  lm(formula = badbuy ~ . , data = dfcTrain) %>% 
+  predict(dfcTrain, type="response") %>% 
+  bind_cols(dfcTrain, predictedProb =.)
+
+rmse(resultsTrainSet, truth = badbuy, estimate = predictedProb)
+
+
+```
+
+#### rmse for test set
+```{r}
+
+resultsTestSet <-
+  lm(formula = badbuy ~ . , data = dfcTrain) %>% 
+  predict(dfcTest, type="response") %>% 
+  bind_cols(dfcTest, predictedProb =.)
+
+rmse(resultsTestSet, truth = badbuy, estimate = predictedProb)
+
+```
+
+### c) Classification of data 
+```{r}
+resultsSet <-
+  lm(formula = badbuy ~ . , data = dfcTrain) %>% 
+  predict(dfcTest, type="response") %>% 
+  bind_cols(dfcTest, predictedProb =.) %>% 
+  mutate(predictedClass = as.factor(ifelse(predictedProb>0.5,1,0))) %>% 
+  mutate(badbuy = as.factor(badbuy))
+
+resultsSet %>% 
+  conf_mat(truth=badbuy, estimate=predictedClass)
+
+```
+
+### d) Testing accuracy of the model against the baseline
+```{r}
+dfcTest %>% 
+  group_by(badbuy) %>% 
+  tally() %>% 
+  mutate(pct = 100*n/sum(n))
+```
+
+```{r}
+confusionMatrix(data=resultsSet$predictedClass, reference=resultsSet$badbuy )
+```
+
+## 4) Logistic Regression
+
+#### Converting badbuy to a factor
+```{r}
+
+dfcTrain <-
+  dfcTrain %>% 
+   mutate(badbuy = factor(badbuy))
+```
+
+```{r}
+
+dfcTest <-
+  dfcTest %>% 
+   mutate(badbuy = factor(badbuy))
+```
+
+```{r}
+fitLogistic <- glm(formula = badbuy ~ ., data = dfcTrain, family = binomial)
+summary(fitLogistic)
+```
+
+
+### a) Run the regression using caret
+
+```{r}
+resultsLogCaret <-
+  train(badbuy ~., family='binomial' ,data= dfcTrain, method='glm') 
+  
+```
+
+#### Check why the rank deficient error occurs
+
+```{r}
+
+tally(group_by(dfc, auction))
+tally(group_by(dfc, make))
+tally(group_by(dfc, color))
+tally(group_by(dfc, wheeltype))
+tally(group_by(dfc, size))
+
+```
+
+#### Fix the source of the error
+```{r}
+dfc$color<- as.character(dfc$color)
+dfc$make <- as.character(dfc$make)
+
+```
+
+```{r}
+
+dfc <-
+  dfc %>% 
+  mutate(color = ifelse (color=="NOTAVAIL", "NULL",color)) %>% 
+  group_by(make) %>% 
+  mutate(makeType = ifelse (n() < 10, 1, 0)) %>% 
+  ungroup() %>% 
+  mutate(make = ifelse(makeType == 1, "OTHER", make)) %>% 
+  select(-makeType)
+
+
+```
+
+```{r}
+dfc$color<- as.factor(dfc$color)
+dfc$make <- as.factor(dfc$make)
+dfc$badbuy <- as.factor(dfc$badbuy)
+```
+
+#### Split the dataset into test and train data
+```{r}
+
+set.seed(52156)
+dfcTrain <- dfc %>%
+  sample_frac(size=0.65)
+
+dfcTest <-
+  dplyr::setdiff(dfc, dfcTrain)
+```
+
+```{r}
+resultsLogCaret <-
+  train(badbuy ~., family='binomial' ,data= dfcTrain, method='glm') 
+```
+### b) & c) Coefficient interpretation
+
+```{r}
+fitLogistic <- glm(formula = badbuy ~ ., data = dfcTrain, family = binomial)
+summary(fitLogistic)
+exp(coef(fitLogistic))
+```
+
+### d) Use cutoff as 0.5 and classify the cars in test data set
+
+```{r}
+
+resultsLogCaret <-
+  train(badbuy~ ., family='binomial', data=dfcTrain, method='glm') %>% 
+  predict(dfcTest, type='raw') %>% 
+  bind_cols(dfcTest, predictedClass=.)
+
+resultsLogCaret %>% 
+  xtabs(~predictedClass + badbuy, .) %>% 
+  confusionMatrix(positive = '1') 
+
+```
+
+## 5) Exploring alternative models
+
+### a) LDA Model
+```{r}
+
+set.seed(123)
+resultsLDACaret <-
+  train(badbuy~ .,data=dfcTrain, method='lda',trControl=trainControl(method='cv', number=10)) %>% 
+  predict(dfcTest) %>% 
+  bind_cols(dfcTest, predictedClass=.)
+
+resultsLDACaret %>% 
+  xtabs(~predictedClass + badbuy, .) %>% 
+  confusionMatrix(positive = '1')
+
+
+```
+
+### b) KNN Model
+
+```{r}
+
+set.seed(123)
+modelKnnCaret <-
+  train(badbuy~ ., data=dfcTrain, preProcess=c("center","scale"),tuneLength = 30 ,method='knn',trControl=trainControl(method='cv', number=10))
+
+modelKnnCaret
+```
+
+```{r}
+
+resultsKnnCaret<-
+predict(modelKnnCaret, dfcTest) %>% 
+bind_cols(dfcTest, predictedClass=.)
+
+resultsKnnCaret %>% 
+  xtabs(~predictedClass + badbuy, .) %>% 
+  confusionMatrix(positive = '1')
+
+```
+
+```{r}
+plot(modelKnnCaret)
+```
+
+### c) Lasso Model
+```{r}
+
+lambdaValues <- 10^seq(-5, 2, length = 100)
+set.seed(123)
+fitLasso <- train(badbuy ~ ., family='binomial', data=dfcTrain, method='glmnet', trControl=trainControl(method='cv', number=10), tuneGrid = expand.grid(alpha=1, lambda=lambdaValues))
+
+```
+
+
+```{r}
+fitLasso$bestTune$lambda
+```
+
+
+```{r}
+
+varImp(fitLasso)$importance %>%    # Add scale=FALSE inside VarImp if you don't want to scale
+  rownames_to_column(var = "Variable") %>%
+  mutate(Importance = scales::percent(Overall/100)) %>% 
+  arrange(desc(Overall)) %>% 
+  as_tibble()
+
+plot(varImp(fitLasso), top=25)
+```
+
+```{r}
+resultsLassoCaret <-
+  predict(fitLasso, dfcTest, type='raw') %>% 
+bind_cols(dfcTest, predictedClass=.)
+
+resultsLassoCaret %>% 
+  xtabs(~predictedClass + badbuy, .) %>% 
+  confusionMatrix(positive = '1')
+```
+
+### d) Ridge and Elastic net models
+
+#### Ridge Model
+```{r}
+
+set.seed(123)
+fitRidge <- train(badbuy ~ ., family='binomial', data=dfcTrain, method='glmnet', trControl=trainControl(method='cv', number=10), tuneGrid = expand.grid(alpha=0, lambda=lambdaValues))
+
+fitRidge$bestTune$lambda
+
+```
+
+```{r}
+resultsRidgeCaret <-
+  predict(fitRidge, dfcTest, type='raw') %>% 
+bind_cols(dfcTest, predictedClass=.)
+
+resultsRidgeCaret %>% 
+  xtabs(~predictedClass + badbuy, .) %>% 
+  confusionMatrix(positive = '1')
+
+```
+
+
+#### Elastic Net Model
+```{r}
+set.seed(123)
+fitElastic <- train(badbuy ~ ., family='binomial', data=dfcTrain, method='glmnet', trControl=trainControl(method='cv', number=10), tuneGrid=expand.grid(alpha=0.5, lambda=lambdaValues))
+
+```
+
+```{r}
+fitElastic$bestTune$lambda
+
+```
+
+```{r}
+
+resultsElasticCaret <-
+  predict(fitElastic, dfcTest, type='raw') %>% 
+bind_cols(dfcTest, predictedClass=.)
+
+resultsElasticCaret %>% 
+  xtabs(~predictedClass + badbuy, .) %>% 
+  confusionMatrix(positive = '1')
+```
+
+### e) QDA Model
+
+```{r}
+
+set.seed(123)
+resultsQDACaret <-
+  train(badbuy~ .,data=dfcTrain, method='qda',trControl=trainControl(method='cv', number=10)) %>% 
+  predict(dfcTest) %>% 
+  bind_cols(dfcTest, predictedClass=.)
+
+resultsQDACaret %>% 
+  xtabs(~predictedClass + badbuy, .) %>% 
+  confusionMatrix(positive = '1')
+```
+
+### f) ROC Curves for all models
+
+```{r}
+
+model1 <- 
+  train(badbuy ~ ., family='binomial', data=dfcTrain, method='glm') %>% 
+  predict(dfcTest, type='prob') %>% 
+  bind_cols(dfcTest,PredictedProb= .$"1") %>% 
+  mutate(model = "Logistic") 
+
+model2 <- 
+  train(badbuy~ .,data=dfcTrain, method='lda',trControl=trainControl(method='cv', number=10)) %>% 
+  predict(dfcTest, type='prob') %>% 
+  bind_cols(dfcTest,PredictedProb= .$"1") %>% 
+  mutate(model = "LDA") 
+
+model3 <- predict(modelKnnCaret, dfcTest, type = 'prob') %>%
+  bind_cols(dfcTest,PredictedProb =.$"1") %>% 
+  mutate(model = "Knn") 
+
+model4 <- predict(fitLasso, dfcTest, type = 'prob') %>%
+  bind_cols(dfcTest,PredictedProb =.$"1") %>% 
+  mutate(model = "Lasso")
+
+model5 <- predict(fitRidge, dfcTest, type = 'prob') %>%
+  bind_cols(dfcTest,PredictedProb =.$"1") %>% 
+  mutate(model = "Ridge")
+
+model6 <- predict(fitElastic, dfcTest, type = 'prob') %>%
+  bind_cols(dfcTest,PredictedProb =.$"1") %>% 
+  mutate(model = "Elastic Net")
+
+model7 <- 
+  train(badbuy~ .,data=dfcTrain, method='qda',trControl=trainControl(method='cv', number=10)) %>%
+  predict(dfcTest, type = 'prob') %>%
+  bind_cols(dfcTest,PredictedProb =.$"1") %>% 
+  mutate(model = "QDA")
+
+# combine the data frames by rows into a larger data frame
+modelAll <- bind_rows(model1, model2, model3, model4, model5, model6, model7)
+
+modelAll %>%
+  group_by(model) %>% # group to get individual ROC curve for each model
+  roc_curve(truth = badbuy, PredictedProb) %>% # get values to plot an ROC curve
+  ggplot(aes(x = 1 - specificity, y = sensitivity, color = model)) + # plota ROC curve for each model
+  geom_line(size = 1.1) +
+  geom_abline(slope = 1, intercept = 0, size = 0.4) +
+  scale_color_manual(values = c("#183CF2","#66FFFF","#7F00FF","#B2FF66","#000000","#990000","#FF9933")) +
+  coord_fixed() +
+  theme_cowplot()
+
+
+# calculate the AUCs
+modelAll %>%
+  group_by(model) %>% # group to get individual AUC value for each model
+  roc_auc(truth = badbuy, PredictedProb) %>% 
+  arrange(desc(.estimate))
+
+
+```
+
+## Bonus Question
+
+```{r warning=FALSE}
+
+dfTrainGroup <-
+  dfcTrain %>%
+  mutate(badbuy = as.numeric(badbuy)) %>% 
+  mutate(badbuy = ifelse(badbuy == 2, 1, 0))
+
+set.seed(123)
+
+fitGroupedLasso <- grplasso(badbuy ~ ., data=dfTrainGroup, model=LogReg(), lambda=100)
+
+#Coefficients from the group lasso (If a coefficient is zero, the variable is dropped!)
+fitGroupedLasso$coefficients
+
+```
+
+```{r warning=FALSE}
+dfTrainGroup <-
+  dfcTrain %>%
+  mutate(badbuy = as.numeric(badbuy)) %>% 
+  mutate(badbuy = ifelse(badbuy == 2, 1, 0))
+
+set.seed(123)
+
+fitGroupedLasso <- grplasso(badbuy ~ ., data=dfTrainGroup, model=LogReg(), lambda=50)
+
+#Coefficients from the group lasso (If a coefficient is zero, the variable is dropped!)
+fitGroupedLasso$coefficients
+```
+
+```{r}
+set.seed(123)
+fitLasso <- train(badbuy ~ ., family='binomial', data=dfcTrain, method='glmnet', trControl=trainControl(method='cv', number=10), tuneGrid = expand.grid(alpha=1, lambda=0.01))
+
+coef(fitLasso$finalModel, fitLasso$bestTune$lambda)
+```
